@@ -25,6 +25,7 @@ PORT = 8765
 REDIRECT = f"http://127.0.0.1:{PORT}/callback"
 ACCOUNTS = "https://accounts.spotify.com"
 DASHBOARD = "https://developer.spotify.com/dashboard"
+SCOPES = "user-library-read user-library-modify"
 
 
 def token_request(**fields):
@@ -33,11 +34,11 @@ def token_request(**fields):
         return json.load(response)
 
 
-def write_credentials(client_id, refresh_token):
+def write_credentials(client_id, refresh_token, scopes):
     fd, name = tempfile.mkstemp(dir=CONFIG)
     try:
         with os.fdopen(fd, "w") as output:
-            json.dump({"client_id": client_id, "refresh_token": refresh_token}, output)
+            json.dump({"client_id": client_id, "refresh_token": refresh_token, "scope": scopes}, output)
         os.replace(name, CREDENTIALS)
     finally:
         Path(name).unlink(missing_ok=True)
@@ -53,7 +54,7 @@ def authorize(client_id):
         "client_id": client_id,
         "response_type": "code",
         "redirect_uri": REDIRECT,
-        "scope": "user-library-modify",
+        "scope": SCOPES,
         "code_challenge_method": "S256",
         "code_challenge": challenge,
         "state": state,
@@ -97,9 +98,12 @@ def authorize(client_id):
         redirect_uri=REDIRECT,
         code_verifier=verifier,
     )
+    scopes = token.get("scope", "")
+    if not has_library_scopes(scopes):
+        raise ValueError("Approve both Spotify library permissions and try again.")
     with (CONFIG / "lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        write_credentials(client_id, token["refresh_token"])
+        write_credentials(client_id, token["refresh_token"], scopes)
     print("Spotify authorization saved.")
 
 
@@ -110,18 +114,31 @@ def open_browser(url):
         pass  # The URL is also printed for manual use.
 
 
+def has_library_scopes(scopes):
+    return isinstance(scopes, str) and set(SCOPES.split()).issubset(scopes.split())
+
+
 def connect(force=False):
-    if not force and CREDENTIALS.is_file():
+    credentials = {}
+    if CREDENTIALS.is_file():
         try:
             credentials = json.loads(CREDENTIALS.read_text())
-            if credentials.get("client_id") and credentials.get("refresh_token"):
-                print("Spotify is already connected.")
-                return
-        except (ValueError, AttributeError):
+        except ValueError:
             pass
+        if not isinstance(credentials, dict):
+            credentials = {}
+    client_id = credentials.get("client_id", "")
+    if not force and client_id and credentials.get("refresh_token") and has_library_scopes(credentials.get("scope")):
+        print("Spotify is already connected.")
+        return
 
     if not sys.stdin.isatty():
         raise ValueError("Run ./install.sh in a terminal to connect your Spotify account.")
+
+    if client_id and not force:
+        print("Approve Spotify library read access to show which songs are already liked.", flush=True)
+        authorize(valid_client_id(client_id))
+        return
 
     print(
         f"Open your Spotify Developer Dashboard at {DASHBOARD} and create or select an app.\n"
@@ -139,42 +156,59 @@ def valid_client_id(client_id):
     return client_id
 
 
-def save(uri):
+def library_action(action, uri):
     with (CONFIG / "lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if not CREDENTIALS.is_file():
             raise ValueError("Run ./install.sh from the PlasmaSpotifyHover project to connect Spotify.")
         credentials = json.loads(CREDENTIALS.read_text())
+        scopes = credentials.get("scope", "")
+        if not has_library_scopes(scopes):
+            raise ValueError("Run ./install.sh to approve Spotify library read access.")
         try:
-            token = token_request(grant_type="refresh_token", **credentials)
+            token = token_request(
+                grant_type="refresh_token",
+                client_id=credentials["client_id"],
+                refresh_token=credentials["refresh_token"],
+            )
         except HTTPError as error:
             if error.code in (400, 401):
                 raise ValueError("Spotify authorization expired. Run ./install.sh reconnect.") from None
             raise
         if token.get("refresh_token"):
-            write_credentials(credentials["client_id"], token["refresh_token"])
+            write_credentials(credentials["client_id"], token["refresh_token"], scopes)
 
+    # https://developer.spotify.com/documentation/web-api/reference/check-library-contains
+    # https://developer.spotify.com/documentation/web-api/reference/remove-library-items
     # https://developer.spotify.com/documentation/web-api/reference/save-library-items
+    method = {"status": "GET", "save": "PUT", "remove": "DELETE"}[action]
+    endpoint = "/contains" if action == "status" else ""
     query = urlencode({"uris": uri})
     request = Request(
-        f"https://api.spotify.com/v1/me/library?{query}",
-        method="PUT",
+        f"https://api.spotify.com/v1/me/library{endpoint}?{query}",
+        method=method,
         headers={"Authorization": f"Bearer {token['access_token']}"},
     )
-    with urlopen(request, timeout=8):
-        pass
+    with urlopen(request, timeout=8) as response:
+        if action == "status":
+            states = json.load(response)
+            if not isinstance(states, list) or len(states) != 1 or type(states[0]) is not bool:
+                raise ValueError("Spotify returned an unexpected Liked Songs status.")
+            return states[0]
+    return action == "save"
 
 
 def main():
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="action", required=True)
     commands.add_parser("auth").add_argument("client_id")
-    commands.add_parser("save").add_argument("uri")
+    for action in ("status", "save", "remove"):
+        commands.add_parser(action).add_argument("uri")
     commands.add_parser("connect")
     commands.add_parser("reconnect")
     args = parser.parse_args()
     try:
-        if args.action == "save" and not re.fullmatch(r"spotify:track:[a-zA-Z0-9]{22}", args.uri):
+        if hasattr(args, "uri") and not re.fullmatch(r"spotify:track:[a-zA-Z0-9]{22}", args.uri):
             raise ValueError("Expected a Spotify track URI.")
         CONFIG.mkdir(mode=0o700, parents=True, exist_ok=True)
         if args.action == "auth":
@@ -182,7 +216,7 @@ def main():
         elif args.action in {"connect", "reconnect"}:
             connect(force=args.action == "reconnect")
         else:
-            save(args.uri)
+            print(int(library_action(args.action, args.uri)))
     except HTTPError as error:
         print(f"Spotify returned HTTP {error.code}.", file=sys.stderr)
         return 1

@@ -14,19 +14,22 @@
 #include <QStandardPaths>
 #include <QTimer>
 
-void Backend::saveSpotifyTrack(const QString &title, const QString &artist)
+int Backend::requestSpotifyLike(const QString &title, const QString &artist, int desired)
 {
-    if (m_spotifySaving) {
-        return;
+    if (m_spotifyBusy || desired < -1 || desired > 1) {
+        return 0;
     }
+    const int requestId = ++m_spotifyRequest;
+    // Keep the last confirmed state visible while a write is pending.
+    m_spotifyLiked = desired < 0 ? -1 : 1 - desired;
     const auto helper = QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("plasma-spotify-hover/spotify-library.py"));
     if (helper.isEmpty()) {
-        finishSpotifySave(i18n("Install the Spotify library helper first"));
-        return;
+        finishSpotifyRequest(-1, i18n("Install the Spotify library helper first"));
+        return requestId;
     }
 
-    m_spotifySaving = true;
-    m_spotifyStatus = i18n("Saving…");
+    m_spotifyBusy = true;
+    m_spotifyStatus.clear();
     Q_EMIT spotifyStatusChanged();
 
     auto request = QDBusMessage::createMethodCall(QStringLiteral("org.mpris.MediaPlayer2.spotify"),
@@ -35,11 +38,11 @@ void Backend::saveSpotifyTrack(const QString &title, const QString &artist)
                                                   QStringLiteral("Get"));
     request << QStringLiteral("org.mpris.MediaPlayer2.Player") << QStringLiteral("Metadata");
     auto watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(request, 3000), this);
-    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, title, artist, helper](QDBusPendingCallWatcher *watcher) {
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, title, artist, helper, desired](QDBusPendingCallWatcher *watcher) {
         const QDBusPendingReply<QDBusVariant> reply = *watcher;
         watcher->deleteLater();
         if (reply.isError()) {
-            finishSpotifySave(i18n("Could not read the current Spotify track"));
+            finishSpotifyRequest(-1, i18n("Could not read the current Spotify track"));
             return;
         }
 
@@ -49,7 +52,7 @@ void Backend::saveSpotifyTrack(const QString &title, const QString &artist)
             artists = metadata.value(QStringLiteral("xesam:albumArtist")).toStringList();
         }
         if (metadata.value(QStringLiteral("xesam:title")).toString() != title || artists.join(QStringLiteral(", ")) != artist) {
-            finishSpotifySave(i18n("The track changed. Click again to save the current track."));
+            finishSpotifyRequest(-1, i18n("The track changed. Check Liked Songs again."));
             return;
         }
 
@@ -57,10 +60,12 @@ void Backend::saveSpotifyTrack(const QString &title, const QString &artist)
             "^(?:spotify:track:|/com/spotify/track/|https://open\\.spotify\\.com/track/)([A-Za-z0-9]{22})(?:\\?[^#]*)?$"));
         auto match = trackPattern.match(metadata.value(QStringLiteral("xesam:url")).toString());
         if (!match.hasMatch()) {
-            match = trackPattern.match(metadata.value(QStringLiteral("mpris:trackid")).toString());
+            const auto id = metadata.value(QStringLiteral("mpris:trackid"));
+            const auto path = id.value<QDBusObjectPath>().path();
+            match = trackPattern.match(path.isEmpty() ? id.toString() : path);
         }
         if (!match.hasMatch()) {
-            finishSpotifySave(i18n("This item has no Spotify track ID"));
+            finishSpotifyRequest(-1, i18n("This item has no Spotify track ID"));
             return;
         }
 
@@ -70,33 +75,31 @@ void Backend::saveSpotifyTrack(const QString &title, const QString &artist)
         connect(timeout, &QTimer::timeout, process, &QProcess::kill);
         connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
             if (error == QProcess::FailedToStart) {
-                finishSpotifySave(i18n("Could not start the Spotify library helper"));
+                finishSpotifyRequest(-1, i18n("Could not start the Spotify library helper"));
                 process->deleteLater();
             }
         });
         connect(process, &QProcess::finished, this, [this, process](int code, QProcess::ExitStatus status) {
             const auto detail = QString::fromUtf8(process->readAllStandardError()).trimmed().left(180);
-            if (status == QProcess::NormalExit && code == 0) {
-                finishSpotifySave(i18n("Saved to Liked Songs"));
+            const auto result = process->readAllStandardOutput().trimmed();
+            if (status == QProcess::NormalExit && code == 0 && (result == "0" || result == "1")) {
+                finishSpotifyRequest(result == "1" ? 1 : 0);
             } else {
-                finishSpotifySave(detail.isEmpty() ? i18n("Could not save to Liked Songs") : detail);
+                finishSpotifyRequest(-1, detail.isEmpty() ? i18n("Could not update Spotify Liked Songs") : detail);
             }
             process->deleteLater();
         });
-        process->start(QStringLiteral("python3"), {helper, QStringLiteral("save"), QStringLiteral("spotify:track:") + match.captured(1)});
-        timeout->start(25000);
+        const auto action = desired < 0 ? QStringLiteral("status") : (desired == 1 ? QStringLiteral("save") : QStringLiteral("remove"));
+        process->start(QStringLiteral("python3"), {helper, action, QStringLiteral("spotify:track:") + match.captured(1)});
+        timeout->start(20000);
     });
+    return requestId;
 }
 
-void Backend::finishSpotifySave(const QString &message)
+void Backend::finishSpotifyRequest(int liked, const QString &message)
 {
-    m_spotifySaving = false;
+    m_spotifyBusy = false;
+    m_spotifyLiked = liked;
     m_spotifyStatus = message;
     Q_EMIT spotifyStatusChanged();
-    QTimer::singleShot(5000, this, [this, message] {
-        if (!m_spotifySaving && m_spotifyStatus == message) {
-            m_spotifyStatus.clear();
-            Q_EMIT spotifyStatusChanged();
-        }
-    });
 }

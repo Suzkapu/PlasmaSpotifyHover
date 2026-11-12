@@ -19,24 +19,28 @@ index 6848151..7ffdc1d 100644
                        Qt::Quick
                        Plasma::Activities
 diff --git a/applets/taskmanager/backend.h b/applets/taskmanager/backend.h
-index f95faee..c1c8ab9 100644
+index f95faee..c37419f 100644
 --- a/applets/taskmanager/backend.h
 +++ b/applets/taskmanager/backend.h
-@@ -51,6 +51,13 @@ public:
+@@ -51,6 +51,17 @@ public:
      Q_PROPERTY(bool hasActiveTask READ hasActiveTask WRITE setHasActiveTask NOTIFY hasActiveTaskChanged)
      Q_PROPERTY(bool showsOnlyCurrentScreen READ showsOnlyCurrentScreen WRITE setShowsOnlyCurrentScreen NOTIFY showsOnlyCurrentScreenChanged)
  
-+    Q_PROPERTY(bool spotifySaving READ spotifySaving NOTIFY spotifyStatusChanged)
++    Q_PROPERTY(bool spotifyBusy READ spotifyBusy NOTIFY spotifyStatusChanged)
++    Q_PROPERTY(int spotifyRequest READ spotifyRequest NOTIFY spotifyStatusChanged)
++    Q_PROPERTY(int spotifyLiked READ spotifyLiked NOTIFY spotifyStatusChanged)
 +    Q_PROPERTY(QString spotifyStatus READ spotifyStatus NOTIFY spotifyStatusChanged)
 +
-+    bool spotifySaving() const { return m_spotifySaving; }
++    bool spotifyBusy() const { return m_spotifyBusy; }
++    int spotifyRequest() const { return m_spotifyRequest; }
++    int spotifyLiked() const { return m_spotifyLiked; }
 +    QString spotifyStatus() const { return m_spotifyStatus; }
-+    Q_INVOKABLE void saveSpotifyTrack(const QString &title, const QString &artist);
++    Q_INVOKABLE int requestSpotifyLike(const QString &title, const QString &artist, int desired);
 +
      explicit Backend(QObject *parent = nullptr);
      ~Backend() override;
  
-@@ -78,6 +85,8 @@ public:
+@@ -78,6 +89,8 @@ public:
      void setShowsOnlyCurrentScreen(bool shows);
  
  Q_SIGNALS:
@@ -45,22 +49,24 @@ index f95faee..c1c8ab9 100644
      void addLauncher(const QUrl &url) const;
  
      void showAllPlaces();
-@@ -106,6 +115,10 @@ private:
+@@ -106,6 +119,12 @@ private:
  
      QVariantList systemSettingsActions(QObject *parent) const;
  
-+    void finishSpotifySave(const QString &message);
-+    bool m_spotifySaving = false;
++    void finishSpotifyRequest(int liked, const QString &message = {});
++    bool m_spotifyBusy = false;
++    int m_spotifyRequest = 0;
++    int m_spotifyLiked = -1;
 +    QString m_spotifyStatus;
 +
      QActionGroup *m_actionGroup = nullptr;
      KActivities::Consumer *m_activitiesConsumer = nullptr;
  
 diff --git a/applets/taskmanager/qml/ToolTipInstance.qml b/applets/taskmanager/qml/ToolTipInstance.qml
-index 7c5f245..e0397a7 100644
+index 7c5f245..33bbfbf 100644
 --- a/applets/taskmanager/qml/ToolTipInstance.qml
 +++ b/applets/taskmanager/qml/ToolTipInstance.qml
-@@ -377,6 +377,102 @@ ColumnLayout {
+@@ -377,6 +377,136 @@ ColumnLayout {
          source: "PlayerController.qml"
      }
  
@@ -76,6 +82,14 @@ index 7c5f245..e0397a7 100644
 +        readonly property string track: player?.track ?? ""
 +        readonly property string artist: player?.artist ?? ""
 +        property int trackRevision: 0
++        property bool needsLikeCheck: true
++        property int likeRequest: 0
++        readonly property bool hasLikeResult: likeRequest > 0 && likeRequest === backend.spotifyRequest
++        readonly property int liked: hasLikeResult ? backend.spotifyLiked : -1
++        readonly property string likeStatus: hasLikeResult ? backend.spotifyStatus : ""
++
++        onTrackRevisionChanged: refreshLike()
++        onVisibleChanged: refreshLike()
 +        onTrackChanged: ++trackRevision
 +        onArtistChanged: ++trackRevision
 +        onPlayerChanged: ++trackRevision
@@ -85,6 +99,21 @@ index 7c5f245..e0397a7 100644
 +        Layout.maximumWidth: headerItem.Layout.maximumWidth
 +        Layout.leftMargin: headerItem.Layout.margins
 +        Layout.rightMargin: headerItem.Layout.margins
++
++        function refreshLike(): void {
++            likeRequest = 0;
++            needsLikeCheck = true;
++        }
++
++        Timer {
++            interval: 100
++            running: spotifyControls.visible && spotifyControls.track.length > 0
++                && spotifyControls.needsLikeCheck && !backend.spotifyBusy
++            onTriggered: {
++                spotifyControls.needsLikeCheck = false;
++                spotifyControls.likeRequest = backend.requestSpotifyLike(spotifyControls.track, spotifyControls.artist, -1);
++            }
++        }
 +
 +        Timer {
 +            interval: 1000
@@ -140,18 +169,29 @@ index 7c5f245..e0397a7 100644
 +        }
 +
 +        PlasmaComponents3.ToolButton {
-+            icon.name: "emblem-favorite-symbolic"
-+            enabled: spotifyControls.track.length > 0 && !backend.spotifySaving
-+            Accessible.name: i18n("Save to Spotify Liked Songs")
++            text: spotifyControls.liked === 1 ? "♥" : "♡"
++            enabled: spotifyControls.track.length > 0 && !spotifyControls.needsLikeCheck && !backend.spotifyBusy
++            Accessible.name: {
++                if (spotifyControls.liked === 1) {
++                    return i18n("Remove from Spotify Liked Songs");
++                }
++                if (spotifyControls.liked === 0) {
++                    return i18n("Save to Spotify Liked Songs");
++                }
++                return i18n("Check Spotify Liked Songs");
++            }
 +            PlasmaComponents3.ToolTip.text: Accessible.name
 +            PlasmaComponents3.ToolTip.visible: hovered
-+            onClicked: backend.saveSpotifyTrack(spotifyControls.track, spotifyControls.artist)
++            onClicked: {
++                const desired = spotifyControls.liked < 0 ? -1 : 1 - spotifyControls.liked;
++                spotifyControls.likeRequest = backend.requestSpotifyLike(spotifyControls.track, spotifyControls.artist, desired);
++            }
 +        }
 +    }
 +
 +    PlasmaComponents3.Label {
-+        visible: spotifyControls.visible && backend.spotifyStatus.length > 0
-+        text: backend.spotifyStatus
++        visible: spotifyControls.visible && spotifyControls.likeStatus.length > 0
++        text: spotifyControls.likeStatus
 +        textFormat: Text.PlainText
 +        wrapMode: Text.WordWrap
 +        Layout.fillWidth: true
