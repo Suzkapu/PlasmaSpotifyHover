@@ -1,0 +1,165 @@
+diff --git a/applets/taskmanager/CMakeLists.txt b/applets/taskmanager/CMakeLists.txt
+index 6848151..7ffdc1d 100644
+--- a/applets/taskmanager/CMakeLists.txt
++++ b/applets/taskmanager/CMakeLists.txt
+@@ -26,6 +26,7 @@ plasma_add_applet(org.kde.plasma.taskmanager
+         qml/code/TaskTools.js
+     CPP_SOURCES
+         backend.cpp
++        spotify.cpp
+         smartlauncherbackend.cpp
+         smartlauncheritem.cpp
+     RESOURCES
+@@ -43,6 +44,7 @@ ecm_qt_declare_logging_category(org.kde.plasma.taskmanager
+ # FIXME Cleanup no longer used libs.
+ target_link_libraries(org.kde.plasma.taskmanager PRIVATE
+                       Qt::Core
++                      Qt::DBus
+                       Qt::Qml
+                       Qt::Quick
+                       Plasma::Activities
+diff --git a/applets/taskmanager/backend.h b/applets/taskmanager/backend.h
+index f95faee..c1c8ab9 100644
+--- a/applets/taskmanager/backend.h
++++ b/applets/taskmanager/backend.h
+@@ -51,6 +51,13 @@ public:
+     Q_PROPERTY(bool hasActiveTask READ hasActiveTask WRITE setHasActiveTask NOTIFY hasActiveTaskChanged)
+     Q_PROPERTY(bool showsOnlyCurrentScreen READ showsOnlyCurrentScreen WRITE setShowsOnlyCurrentScreen NOTIFY showsOnlyCurrentScreenChanged)
+ 
++    Q_PROPERTY(bool spotifySaving READ spotifySaving NOTIFY spotifyStatusChanged)
++    Q_PROPERTY(QString spotifyStatus READ spotifyStatus NOTIFY spotifyStatusChanged)
++
++    bool spotifySaving() const { return m_spotifySaving; }
++    QString spotifyStatus() const { return m_spotifyStatus; }
++    Q_INVOKABLE void saveSpotifyTrack(const QString &title, const QString &artist);
++
+     explicit Backend(QObject *parent = nullptr);
+     ~Backend() override;
+ 
+@@ -78,6 +85,8 @@ public:
+     void setShowsOnlyCurrentScreen(bool shows);
+ 
+ Q_SIGNALS:
++    void spotifyStatusChanged();
++
+     void addLauncher(const QUrl &url) const;
+ 
+     void showAllPlaces();
+@@ -106,6 +115,10 @@ private:
+ 
+     QVariantList systemSettingsActions(QObject *parent) const;
+ 
++    void finishSpotifySave(const QString &message);
++    bool m_spotifySaving = false;
++    QString m_spotifyStatus;
++
+     QActionGroup *m_actionGroup = nullptr;
+     KActivities::Consumer *m_activitiesConsumer = nullptr;
+ 
+diff --git a/applets/taskmanager/qml/ToolTipInstance.qml b/applets/taskmanager/qml/ToolTipInstance.qml
+index 7c5f245..e0397a7 100644
+--- a/applets/taskmanager/qml/ToolTipInstance.qml
++++ b/applets/taskmanager/qml/ToolTipInstance.qml
+@@ -377,6 +377,102 @@ ColumnLayout {
+         source: "PlayerController.qml"
+     }
+ 
++    // Use the player already matched to this task by Plasma.
++    RowLayout {
++        id: spotifyControls
++
++        readonly property var player: playerController.active ? toolTipDelegate.playerData : null
++        readonly property string entry: player?.desktopEntry?.toLowerCase() ?? ""
++        readonly property bool isSpotify: ["spotify", "spotify.desktop", "com.spotify.client",
++                                            "com.spotify.client.desktop"].includes(entry)
++        readonly property bool canSeek: isSpotify && (player?.canSeek ?? false) && player.length > 0
++        readonly property string track: player?.track ?? ""
++        readonly property string artist: player?.artist ?? ""
++        property int trackRevision: 0
++        onTrackChanged: ++trackRevision
++        onArtistChanged: ++trackRevision
++        onPlayerChanged: ++trackRevision
++
++        visible: isSpotify
++        Layout.fillWidth: true
++        Layout.maximumWidth: headerItem.Layout.maximumWidth
++        Layout.leftMargin: headerItem.Layout.margins
++        Layout.rightMargin: headerItem.Layout.margins
++
++        Timer {
++            interval: 1000
++            repeat: true
++            running: spotifyControls.visible && spotifyControls.canSeek
++            triggeredOnStart: true
++            onTriggered: spotifyControls.player?.updatePosition()
++        }
++
++        PlasmaComponents3.Slider {
++            id: seekSlider
++
++            property int dragRevision: -1
++
++            visible: spotifyControls.canSeek
++            Layout.fillWidth: true
++            from: 0
++            to: spotifyControls.player?.length ?? 0
++            Accessible.name: i18n("Seek in Spotify track")
++
++            Binding on value {
++                when: seekSlider.dragRevision === -1
++                value: spotifyControls.player?.position ?? 0
++                restoreMode: Binding.RestoreNone
++            }
++
++            onPressedChanged: {
++                if (pressed) {
++                    dragRevision = spotifyControls.trackRevision;
++                } else {
++                    if (dragRevision === spotifyControls.trackRevision && spotifyControls.canSeek) {
++                        spotifyControls.player.position = Math.round(value);
++                    }
++                    dragRevision = -1;
++                }
++            }
++
++            onMoved: {
++                if (dragRevision === -1 && !pressed && spotifyControls.canSeek) {
++                    spotifyControls.player.position = Math.round(value);
++                }
++            }
++        }
++
++        PlasmaComponents3.Label {
++            visible: seekSlider.visible
++            text: formatTime(seekSlider.value) + " / " + formatTime(seekSlider.to)
++
++            function formatTime(microseconds: real): string {
++                const seconds = Math.max(0, Math.floor(microseconds / 1000000));
++                return Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
++            }
++        }
++
++        PlasmaComponents3.ToolButton {
++            icon.name: "emblem-favorite-symbolic"
++            enabled: spotifyControls.track.length > 0 && !backend.spotifySaving
++            Accessible.name: i18n("Save to Spotify Liked Songs")
++            PlasmaComponents3.ToolTip.text: Accessible.name
++            PlasmaComponents3.ToolTip.visible: hovered
++            onClicked: backend.saveSpotifyTrack(spotifyControls.track, spotifyControls.artist)
++        }
++    }
++
++    PlasmaComponents3.Label {
++        visible: spotifyControls.visible && backend.spotifyStatus.length > 0
++        text: backend.spotifyStatus
++        textFormat: Text.PlainText
++        wrapMode: Text.WordWrap
++        Layout.fillWidth: true
++        Layout.maximumWidth: headerItem.Layout.maximumWidth
++        Layout.leftMargin: headerItem.Layout.margins
++        Layout.rightMargin: headerItem.Layout.margins
++    }
++
+     // Volume controls
+     Loader {
+         id: volumeControls
