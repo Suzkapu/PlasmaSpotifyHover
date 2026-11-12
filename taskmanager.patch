@@ -63,10 +63,10 @@ index f95faee..c37419f 100644
      KActivities::Consumer *m_activitiesConsumer = nullptr;
  
 diff --git a/applets/taskmanager/qml/ToolTipInstance.qml b/applets/taskmanager/qml/ToolTipInstance.qml
-index 7c5f245..b4ae7ec 100644
+index 7c5f245..02e3691 100644
 --- a/applets/taskmanager/qml/ToolTipInstance.qml
 +++ b/applets/taskmanager/qml/ToolTipInstance.qml
-@@ -377,6 +377,139 @@ ColumnLayout {
+@@ -377,6 +377,141 @@ ColumnLayout {
          source: "PlayerController.qml"
      }
  
@@ -90,6 +90,7 @@ index 7c5f245..b4ae7ec 100644
 +
 +        onTrackRevisionChanged: refreshLike()
 +        onVisibleChanged: refreshLike()
++        onCanSeekChanged: refreshLike()
 +        onTrackChanged: ++trackRevision
 +        onArtistChanged: ++trackRevision
 +        onPlayerChanged: ++trackRevision
@@ -107,7 +108,7 @@ index 7c5f245..b4ae7ec 100644
 +
 +        Timer {
 +            interval: 100
-+            running: spotifyControls.visible && spotifyControls.track.length > 0
++            running: seekSlider.visible && spotifyControls.track.length > 0
 +                && spotifyControls.needsLikeCheck && !backend.spotifyBusy
 +            onTriggered: {
 +                spotifyControls.needsLikeCheck = false;
@@ -172,6 +173,7 @@ index 7c5f245..b4ae7ec 100644
 +            Layout.minimumWidth: Kirigami.Units.iconSizes.medium + Kirigami.Units.smallSpacing * 2
 +            Layout.minimumHeight: Kirigami.Units.iconSizes.medium + Kirigami.Units.smallSpacing * 2
 +            font.pixelSize: Kirigami.Units.iconSizes.medium
++            visible: seekSlider.visible
 +            text: spotifyControls.liked === 1 ? "♥" : "♡"
 +            enabled: spotifyControls.track.length > 0 && !spotifyControls.needsLikeCheck && !backend.spotifyBusy
 +            Accessible.name: {
@@ -193,7 +195,7 @@ index 7c5f245..b4ae7ec 100644
 +    }
 +
 +    PlasmaComponents3.Label {
-+        visible: spotifyControls.visible && spotifyControls.likeStatus.length > 0
++        visible: seekSlider.visible && spotifyControls.likeStatus.length > 0
 +        text: spotifyControls.likeStatus
 +        textFormat: Text.PlainText
 +        wrapMode: Text.WordWrap

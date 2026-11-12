@@ -31,3 +31,7 @@ This removes the Plasma service override and reloads the shell. The Spotify refr
 - Plasma 6.8.2 packages the QML tooltip in a compiled Task Manager plugin shared by Task Manager and Icons-Only Task Manager. The patch applies to the [matching KDE source](https://github.com/KDE/plasma-desktop/tree/v6.8.2/applets/taskmanager).
 - Seeking follows KDE’s [Media Controller implementation](https://github.com/KDE/plasma-workspace/blob/v6.8.2/applets/mediacontroller/ExpandedRepresentation.qml) and the [MPRIS interface](https://specifications.freedesktop.org/mpris/latest/Player_Interface.html).
 - The [Spotify library status API](https://developer.spotify.com/documentation/web-api/reference/check-library-contains) supplies the heart state. The [remove endpoint](https://developer.spotify.com/documentation/web-api/reference/remove-library-items) handles unliking. The GNOME [Spotify Controller](https://github.com/NarkAgni/spotify-controller/blob/640d3f6a5fe26e78bb75a58c64538ec1804ca7e0/core/playlist.js) was reviewed for comparison. Its heart stores favorites locally. This project implements the account save using Spotify’s [Save Items to Library](https://developer.spotify.com/documentation/web-api/reference/save-library-items) endpoint.
+
+## License
+
+The project’s original code is licensed under the [GNU Affero General Public License v3.0](LICENSE). The KDE files modified by the patch retain their upstream GPL and LGPL notices. Their license texts are included in this repository.
