@@ -2,34 +2,29 @@
 
 A patch for KDE Plasma Desktop 6.8.2 that adds a timeline and a heart to the existing Spotify taskbar hover preview. The timeline uses the MPRIS player Plasma already matches to the task. Click or drag to seek, or use the arrow keys when the slider has focus. The heart saves the displayed song to your Spotify Liked Songs and reports the result in the popup. Clicking it again is safe.
 
-## Build and enable on CachyOS
+## Install on CachyOS
 
-The plugin builds against Plasma 6.8.2 and the matching installed development libraries. Install `extra-cmake-modules` if missing. The build also needs Git, GNU patch, CMake, Ninja, a C++ compiler, Qt 6 and the KDE libraries listed in [CMakeLists.txt](CMakeLists.txt).
+From this project directory, run:
 
 ```sh
-./build.sh
-./install.sh enable
-systemctl --user restart plasma-plasmashell.service
+./install.sh
 ```
 
-A local build of the plugin was placed in the build directory on this machine, so you can start at `./install.sh enable`. The install script targets a Plasma session managed by the standard `plasma-plasmashell.service` user unit. Its drop-in launches Plasma with the user plugin path ahead of the distro path. The launcher falls back to the distro plugin when the installed Plasma version changes. The restart reloads the panel and desktop shell. With Spotify playing, hover over its taskbar entry. Keep **Show media and volume controls in tooltip** enabled in Task Manager settings.
+The installer uses the local build if present and builds the plugin if needed. It opens your [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) for first-time setup. Create or select an app with Web API access, add the loopback redirect URI printed in the terminal, and paste the app’s Client ID into the installer. Spotify requires Premium for Development Mode app owners.
 
-## Connect the heart to Spotify
+The installer then opens Spotify’s consent page. Approve library access in your browser. After authorization succeeds, the installer puts the helper and plugin in your user data directory, enables the override, and restarts Plasma. The panel and desktop may briefly disappear during the restart. An existing authorization is reused. To connect a different account or repair expired authorization, run `./install.sh reconnect`.
 
-Seeking works independently of Spotify account setup.
+Play a song and hover over the Spotify taskbar entry. Keep **Show media and volume controls in tooltip** enabled in Task Manager settings. Seeking works locally. The heart targets tracks in the native Spotify Linux client. Local files, ads, and episodes may lack a usable track URI.
 
-1. Open the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) and create or reuse a Development Mode app with Web API access. The app owner needs Spotify Premium. Register `http://127.0.0.1:8765/callback` as a redirect URI.
-2. Run `python3 spotify-library.py auth YOUR_CLIENT_ID`, open the URL it prints, and approve library access. Use the account whose Liked Songs should receive the tracks. The helper uses PKCE and stores the refresh token in a user-only file under `${XDG_CONFIG_HOME:-~/.config}/plasma-spotify-hover/`.
-3. Hover over Spotify and click the heart. This targets the native Spotify Linux client and the song identified by its MPRIS metadata. Local files, ads, and episodes may lack a usable track URI.
+The installer targets Plasma 6.8.2 and the standard `plasma-plasmashell.service` user unit. The launcher falls back to the distro plugin when the installed Plasma version changes. Building from source requires Git, GNU patch, CMake, Ninja, a C++ compiler, `extra-cmake-modules`, Qt 6, and the KDE libraries listed in [CMakeLists.txt](CMakeLists.txt).
 
 ## Disable
 
 ```sh
 ./install.sh disable
-systemctl --user restart plasma-plasmashell.service
 ```
 
-This removes the Plasma service override. To disconnect the account too, remove the saved `spotify.json` from the config directory or revoke the app in your Spotify account settings.
+This removes the Plasma service override and reloads the shell. The Spotify refresh token lives in a user-only file called `spotify.json` under `${XDG_CONFIG_HOME:-~/.config}/plasma-spotify-hover/`. Remove it or revoke access in Spotify account settings to disconnect the account.
 
 ## Implementation notes
 

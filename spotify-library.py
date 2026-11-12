@@ -13,6 +13,7 @@ import secrets
 import sys
 import tempfile
 import time
+import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -23,6 +24,7 @@ CREDENTIALS = CONFIG / "spotify.json"
 PORT = 8765
 REDIRECT = f"http://127.0.0.1:{PORT}/callback"
 ACCOUNTS = "https://accounts.spotify.com"
+DASHBOARD = "https://developer.spotify.com/dashboard"
 
 
 def token_request(**fields):
@@ -79,7 +81,9 @@ def authorize(client_id):
 
     with HTTPServer(("127.0.0.1", PORT), Callback) as server:
         server.timeout = 1
-        print(f"Open this URL to authorize Spotify:\n{ACCOUNTS}/authorize?{query}", flush=True)
+        consent_url = f"{ACCOUNTS}/authorize?{query}"
+        print(f"Approve Spotify access in your browser. If it does not open, visit:\n{consent_url}", flush=True)
+        open_browser(consent_url)
         deadline = time.monotonic() + 180
         while not result and time.monotonic() < deadline:
             server.handle_request()
@@ -99,17 +103,53 @@ def authorize(client_id):
     print("Spotify authorization saved.")
 
 
+def open_browser(url):
+    try:
+        webbrowser.open(url)
+    except (OSError, webbrowser.Error):
+        pass  # The URL is also printed for manual use.
+
+
+def connect(force=False):
+    if not force and CREDENTIALS.is_file():
+        try:
+            credentials = json.loads(CREDENTIALS.read_text())
+            if credentials.get("client_id") and credentials.get("refresh_token"):
+                print("Spotify is already connected.")
+                return
+        except (ValueError, AttributeError):
+            pass
+
+    if not sys.stdin.isatty():
+        raise ValueError("Run ./install.sh in a terminal to connect your Spotify account.")
+
+    print(
+        f"Open your Spotify Developer Dashboard at {DASHBOARD} and create or select an app.\n"
+        f"Enable Web API access and add this redirect URI in the app settings:\n{REDIRECT}\n"
+        "Then copy the app's Client ID. Spotify requires Premium for Development Mode app owners.",
+        flush=True,
+    )
+    open_browser(DASHBOARD)
+    authorize(valid_client_id(input("Spotify Client ID: ").strip()))
+
+
+def valid_client_id(client_id):
+    if not re.fullmatch(r"[a-fA-F0-9]{32}", client_id):
+        raise ValueError("Enter the Spotify app's 32-character Client ID.")
+    return client_id
+
+
 def save(uri):
     with (CONFIG / "lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if not CREDENTIALS.is_file():
-            raise ValueError("Run spotify-library.py auth to connect Spotify.")
+            raise ValueError("Run ./install.sh from the PlasmaSpotifyHover project to connect Spotify.")
         credentials = json.loads(CREDENTIALS.read_text())
         try:
             token = token_request(grant_type="refresh_token", **credentials)
         except HTTPError as error:
             if error.code in (400, 401):
-                raise ValueError("Spotify authorization expired. Run spotify-library.py auth again.") from None
+                raise ValueError("Spotify authorization expired. Run ./install.sh reconnect.") from None
             raise
         if token.get("refresh_token"):
             write_credentials(credentials["client_id"], token["refresh_token"])
@@ -130,21 +170,23 @@ def main():
     commands = parser.add_subparsers(dest="action", required=True)
     commands.add_parser("auth").add_argument("client_id")
     commands.add_parser("save").add_argument("uri")
+    commands.add_parser("connect")
+    commands.add_parser("reconnect")
     args = parser.parse_args()
     try:
-        if args.action == "auth" and not re.fullmatch(r"[a-fA-F0-9]{32}", args.client_id):
-            raise ValueError("Enter the Spotify app's 32-character client ID.")
         if args.action == "save" and not re.fullmatch(r"spotify:track:[a-zA-Z0-9]{22}", args.uri):
             raise ValueError("Expected a Spotify track URI.")
         CONFIG.mkdir(mode=0o700, parents=True, exist_ok=True)
         if args.action == "auth":
-            authorize(args.client_id)
+            authorize(valid_client_id(args.client_id))
+        elif args.action in {"connect", "reconnect"}:
+            connect(force=args.action == "reconnect")
         else:
             save(args.uri)
     except HTTPError as error:
         print(f"Spotify returned HTTP {error.code}.", file=sys.stderr)
         return 1
-    except (OSError, ValueError, KeyError) as error:
+    except (OSError, ValueError, KeyError, EOFError) as error:
         print(f"Spotify setup or request failed: {error}", file=sys.stderr)
         return 1
     return 0
