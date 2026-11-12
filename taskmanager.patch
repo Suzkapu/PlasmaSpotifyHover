@@ -63,10 +63,10 @@ index f95faee..c37419f 100644
      KActivities::Consumer *m_activitiesConsumer = nullptr;
  
 diff --git a/applets/taskmanager/qml/ToolTipInstance.qml b/applets/taskmanager/qml/ToolTipInstance.qml
-index 7c5f245..33bbfbf 100644
+index 7c5f245..b4ae7ec 100644
 --- a/applets/taskmanager/qml/ToolTipInstance.qml
 +++ b/applets/taskmanager/qml/ToolTipInstance.qml
-@@ -377,6 +377,136 @@ ColumnLayout {
+@@ -377,6 +377,139 @@ ColumnLayout {
          source: "PlayerController.qml"
      }
  
@@ -169,6 +169,9 @@ index 7c5f245..33bbfbf 100644
 +        }
 +
 +        PlasmaComponents3.ToolButton {
++            Layout.minimumWidth: Kirigami.Units.iconSizes.medium + Kirigami.Units.smallSpacing * 2
++            Layout.minimumHeight: Kirigami.Units.iconSizes.medium + Kirigami.Units.smallSpacing * 2
++            font.pixelSize: Kirigami.Units.iconSizes.medium
 +            text: spotifyControls.liked === 1 ? "♥" : "♡"
 +            enabled: spotifyControls.track.length > 0 && !spotifyControls.needsLikeCheck && !backend.spotifyBusy
 +            Accessible.name: {
