@@ -63,10 +63,18 @@ index f95faee..c37419f 100644
      KActivities::Consumer *m_activitiesConsumer = nullptr;
  
 diff --git a/applets/taskmanager/qml/ToolTipInstance.qml b/applets/taskmanager/qml/ToolTipInstance.qml
-index 7c5f245..02e3691 100644
+index 7c5f245..b36c3ce 100644
 --- a/applets/taskmanager/qml/ToolTipInstance.qml
 +++ b/applets/taskmanager/qml/ToolTipInstance.qml
-@@ -377,6 +377,141 @@ ColumnLayout {
+@@ -18,6 +18,7 @@ import org.kde.plasma.plasmoid
+ import org.kde.plasma.core as PlasmaCore
+ import org.kde.plasma.components as PlasmaComponents3
+ import org.kde.plasma.extras as PlasmaExtras
++import org.kde.plasma.private.mpris as Mpris
+ import org.kde.kirigami as Kirigami
+ import org.kde.kwindowsystem
+ 
+@@ -377,6 +378,161 @@ ColumnLayout {
          source: "PlayerController.qml"
      }
  
@@ -122,6 +130,26 @@ index 7c5f245..02e3691 100644
 +            running: spotifyControls.visible && spotifyControls.canSeek
 +            triggeredOnStart: true
 +            onTriggered: spotifyControls.player?.updatePosition()
++        }
++
++        PlasmaComponents3.ToolButton {
++            id: shuffleButton
++
++            readonly property int shuffle: spotifyControls.player?.shuffle ?? Mpris.ShuffleStatus.Unknown
++
++            visible: seekSlider.visible
++            enabled: (spotifyControls.player?.canControl ?? false) && shuffle !== Mpris.ShuffleStatus.Unknown
++            checked: shuffle === Mpris.ShuffleStatus.On
++            icon.name: "media-playlist-shuffle"
++            display: PlasmaComponents3.AbstractButton.IconOnly
++            text: checked ? i18n("Turn shuffle off") : i18n("Turn shuffle on")
++            Accessible.name: text
++            PlasmaComponents3.ToolTip.text: text
++            PlasmaComponents3.ToolTip.visible: hovered
++
++            onClicked: {
++                spotifyControls.player.shuffle = checked ? Mpris.ShuffleStatus.Off : Mpris.ShuffleStatus.On;
++            }
 +        }
 +
 +        PlasmaComponents3.Slider {
